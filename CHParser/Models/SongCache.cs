@@ -4,6 +4,8 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
 using System.Linq;
+using System.Runtime.CompilerServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
 
@@ -94,10 +96,42 @@ namespace CHParser.Models
                     videoBackground = true;
                 }
             }
-            var song = new SongEntry(path, this);
+            bool noChart = chartFileName == null && !isMidi && !isChart;
+            if (noChart)
+            {
+                Console.WriteLine("No chart file found in " + path);
+                return false;
+            }
+            var song = new SongEntry(path, this)
+            {
+                videoBackground = videoBackground,
+                chartName = chartFileName
+            };
+            song.ReadCharts();
             song.GetTopLevelPlaylist();
             songs.Add(song);
+            compute_hash();
             return true;
+        }
+
+
+        private void compute_hash()
+        {
+            byte[] array = new byte[songs.Count * 16];
+            for (int i = 0; i < songs.Count; i++)
+            {
+                songs[i].checksum.CopyTo(array, i * 16);
+            }
+
+            using MD5 md5 = MD5.Create();
+            hash = md5.ComputeHash(array);
+        }
+
+        private bool fix_song_length(SongEntry song)
+        {
+            if (song.songLength > 0) return true;
+            int songLength = song.songLength;
+            return false;
         }
 
         public Metadata AddMetadata(MetadataType type, string value)
@@ -115,6 +149,45 @@ namespace CHParser.Models
             }
 
             return meta;
+        }
+
+        public void WriteToFile(string path)
+        {
+            if (songs.Count == 0)
+            {
+                return;
+            }
+            using Stream output = File.Create(path);
+            using BinaryWriter binaryWriter = new BinaryWriter(output);
+            binaryWriter.Write(20221120);
+            binaryWriter.Write(hash);
+            WriteMetadata(binaryWriter);
+            binaryWriter.Write(songs.Count);
+            foreach (SongEntry item in songs)
+            {
+                FileInfo fileInfo = new FileInfo(item.iniPath);
+                FileInfo fileInfo2 = new FileInfo(item.chartPath);
+                if (fileInfo.Exists && fileInfo2.Exists)
+                {
+                    binaryWriter.Write(item.folderPath);
+                    binaryWriter.Write(fileInfo.LastWriteTime.ToBinary());
+                    binaryWriter.Write(fileInfo2.LastWriteTime.ToBinary());
+                    item.WriteToFile(binaryWriter);
+                }
+            }
+        }
+
+        private void WriteMetadata(BinaryWriter binaryWriter)
+        {
+            foreach (KeyValuePair<MetadataType, List<Metadata>> item in metadataDict)
+            {
+                binaryWriter.Write((byte)item.Key);
+                binaryWriter.Write(item.Value.Count);
+                foreach (Metadata item2 in item.Value)
+                {
+                    binaryWriter.Write(item2.value);
+                }
+            }
         }
     }
 }
